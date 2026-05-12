@@ -49,6 +49,7 @@ export default function Home() {
   const [uploads, setUploads] = useState<LibraryRecord[]>([]);
   const [generations, setGenerations] = useState<LibraryRecord[]>([]);
   const [libTab, setLibTab] = useState<LibraryStore>("uploads");
+  const [lightbox, setLightbox] = useState<{ url: string; mode?: string } | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const objectUrls = useRef<Set<string>>(new Set());
@@ -109,20 +110,24 @@ export default function Home() {
     [trackUrl],
   );
 
-  // Open a stored generation in the result canvas
+  // Open a stored generation in the lightbox (big preview overlay)
   const openStoredGeneration = useCallback(
     (rec: LibraryRecord) => {
       const url = trackUrl(URL.createObjectURL(rec.blob));
-      setResult({
-        mode: (rec.mode as Mode) ?? "hair",
-        url,
-        recordId: rec.id,
-      });
-      setActiveMode((rec.mode as Mode) ?? null);
-      setError(null);
+      setLightbox({ url, mode: rec.mode });
     },
     [trackUrl],
   );
+
+  // Close lightbox on Esc
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLightbox(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightbox]);
 
   const removeRecord = useCallback(
     async (store: LibraryStore, id: string) => {
@@ -281,7 +286,8 @@ export default function Home() {
             <img
               src={result.url}
               alt={result.mode}
-              className="max-h-[80vh] w-auto rounded-2xl"
+              onClick={() => setLightbox({ url: result.url, mode: result.mode })}
+              className="max-h-[80vh] w-auto cursor-zoom-in rounded-2xl"
             />
             <div className="flex gap-3">
               <a
@@ -377,6 +383,37 @@ export default function Home() {
       <footer className="mt-12 text-center text-xs text-zinc-400">
         本地 demo · gpt-image-2 · 图库存在浏览器 IndexedDB · Style Me
       </footer>
+
+      {/* Lightbox */}
+      {lightbox && (
+        <div
+          onClick={() => setLightbox(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={lightbox.url}
+            alt={lightbox.mode ?? "preview"}
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-[95vh] max-w-[95vw] rounded-2xl object-contain shadow-2xl"
+          />
+          <button
+            onClick={() => setLightbox(null)}
+            aria-label="关闭"
+            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-xl font-medium text-zinc-900 hover:bg-white"
+          >
+            ×
+          </button>
+          <a
+            href={lightbox.url}
+            download={`styleme-${lightbox.mode ?? "image"}.png`}
+            onClick={(e) => e.stopPropagation()}
+            className="absolute bottom-6 left-1/2 -translate-x-1/2 rounded-full bg-white/90 px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-white"
+          >
+            ⬇ 下载
+          </a>
+        </div>
+      )}
     </main>
   );
 }

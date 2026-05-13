@@ -4,6 +4,7 @@
 // personal installs, never publish to App Store with this layout.
 
 import { MODES, type AnalysisMode } from "@/lib/prompts";
+import { shrinkForAzure } from "@/lib/resize";
 
 const ENDPOINT = process.env.NEXT_PUBLIC_AZURE_OPENAI_ENDPOINT;
 const DEPLOYMENT = process.env.NEXT_PUBLIC_AZURE_OPENAI_DEPLOYMENT;
@@ -21,20 +22,32 @@ export async function analyzeImage(
   const cfg = MODES[mode];
   const url = `${ENDPOINT}/openai/deployments/${DEPLOYMENT}/images/edits?api-version=${API_VERSION}`;
 
+  // Phone photos are commonly 4-10 MB; Azure /images/edits caps at 4 MB.
+  // Re-encode large blobs to JPEG before upload.
+  const fileBase = image instanceof File ? image : new File([image], "portrait.jpg", { type: image.type || "image/jpeg" });
+  console.log("[azure] input size", fileBase.size, "type", fileBase.type);
+  const shrunk = await shrinkForAzure(fileBase);
+  console.log("[azure] shrunk size", shrunk.size, "type", shrunk.type);
+
   const body = new FormData();
   body.append(
     "image",
-    new File([image], "portrait.png", { type: image.type || "image/png" }),
+    new File([shrunk], "portrait.jpg", { type: shrunk.type || "image/jpeg" }),
   );
   body.append("prompt", cfg.prompt);
   body.append("size", cfg.size);
   body.append("n", "1");
+  console.log("[azure] POST", url);
 
   const res = await fetch(url, {
     method: "POST",
     headers: { "api-key": KEY },
     body,
+  }).catch((e) => {
+    console.error("[azure] fetch threw", e);
+    throw e;
   });
+  console.log("[azure] response status", res.status);
 
   if (!res.ok) {
     const text = await res.text();

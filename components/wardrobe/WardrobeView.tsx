@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchItems, fetchSummary } from "@/lib/api";
 import type { WardrobeItem, WardrobeSummary } from "@/lib/types";
+import { useNav } from "@/lib/nav";
 import ItemCard from "./ItemCard";
 import ItemDetail from "./ItemDetail";
 import UploadFlow from "./UploadFlow";
@@ -20,6 +21,10 @@ export default function WardrobeView() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<WardrobeItem | null>(null);
   const [showUpload, setShowUpload] = useState(false);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  const { focusItemId, clearFocus } = useNav();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -40,6 +45,26 @@ export default function WardrobeView() {
   }, [category]);
 
   useEffect(() => { load(); }, [load]);
+
+  // When recommend tab navigates to an item, force category=全部 so
+  // it's guaranteed visible, then scroll + flash highlight.
+  useEffect(() => {
+    if (focusItemId && category !== "全部") setCategory("全部");
+  }, [focusItemId, category]);
+
+  useEffect(() => {
+    if (!focusItemId || loading || items.length === 0) return;
+    const node = itemRefs.current[focusItemId];
+    if (node) {
+      node.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightId(focusItemId);
+      const t = setTimeout(() => {
+        setHighlightId(null);
+        clearFocus();
+      }, 2200);
+      return () => clearTimeout(t);
+    }
+  }, [focusItemId, loading, items, clearFocus]);
 
   return (
     <div className="pb-4">
@@ -88,7 +113,17 @@ export default function WardrobeView() {
       ) : (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {items.map((item) => (
-            <ItemCard key={item.id} item={item} onClick={() => setSelected(item)} />
+            <div
+              key={item.id}
+              ref={(el) => { itemRefs.current[item.id] = el; }}
+              className={
+                highlightId === item.id
+                  ? "rounded-2xl ring-4 ring-[#6c5ce7] ring-offset-2 transition-shadow"
+                  : ""
+              }
+            >
+              <ItemCard item={item} onClick={() => setSelected(item)} />
+            </div>
           ))}
         </div>
       )}

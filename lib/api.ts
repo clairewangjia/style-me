@@ -60,10 +60,78 @@ export async function fetchSummary(): Promise<WardrobeSummary> {
 // ── Recommend ──
 
 export async function recommend(req: RecommendRequest): Promise<RecommendResponse> {
+  // Backend may not yet support `mode`. If aspirational, prepend a hint
+  // into `extra` so the LLM still gets the signal even on old backends.
+  const payload =
+    req.mode === "aspirational"
+      ? {
+          ...req,
+          extra: `[mode=aspirational; 不要使用衣柜中的物品 ID, 推荐我应该购买的新单品]${req.extra ? "; " + req.extra : ""}`,
+        }
+      : req;
+
   return apiFetch("/api/recommend", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
+    body: JSON.stringify(payload),
+  });
+}
+
+// Fetch a wardrobe item image as Blob for use in image-edit prompts.
+//
+// Browser caching gotcha: wardrobe thumbnails are loaded with plain
+// <img> (no-cors mode), so the response is cached WITHOUT CORS
+// headers. A subsequent <img crossOrigin="anonymous"> or fetch() to
+// the same URL hits that cached entry and fails with "No ACAO header"
+// even though the server WOULD return ACAO if asked fresh. The dev
+// tunnel doesn't send `Vary: Origin` to disambiguate.
+//
+// Workaround: append a `?cors=1` query so the cors-mode request
+// resolves to a different cache key. Fall back to <img>+canvas, then
+// fetch().blob().
+export async function fetchItemBlob(id: string): Promise<Blob> {
+  const base = itemImageUrl(id);
+  const url = base + (base.includes("?") ? "&" : "?") + "cors=1";
+
+  if (typeof window !== "undefined" && typeof Image !== "undefined") {
+    try {
+      return await loadImageAsBlob(url);
+    } catch (e) {
+      console.warn("[fetchItemBlob] image-loader failed, falling back to fetch", e);
+    }
+  }
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`item ${id} image: ${res.status}`);
+  return res.blob();
+}
+
+function loadImageAsBlob(url: string): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("no 2d context"));
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob(
+          (b) => (b ? resolve(b) : reject(new Error("canvas.toBlob returned null"))),
+          "image/jpeg",
+          0.92,
+        );
+      } catch (e) {
+        reject(e);
+      }
+    };
+    img.onerror = () => reject(new Error(`image load failed: ${url}`));
+    img.src = url;
   });
 }
 

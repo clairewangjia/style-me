@@ -33,6 +33,11 @@ export interface RecommendRequest {
   occasion: string;
   weather?: string;
   extra?: string;
+  /**
+   * "closet" — recommend outfits using existing wardrobe items (default).
+   * "aspirational" — recommend new items the user does not yet own.
+   */
+  mode?: "closet" | "aspirational";
 }
 
 export interface RecommendResponse {

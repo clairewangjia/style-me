@@ -142,20 +142,33 @@ export default function RecommendView() {
     setBoardLoading(true);
     setBoardError(null);
     try {
+      console.log("[board] step 1: fetch item images for", outfits.length, "outfits");
       const boardOutfits: BoardOutfit[] = await Promise.all(
-        outfits.map(async (o) => {
+        outfits.map(async (o, i) => {
           if (resultMode === "closet" && o.itemIds.length > 0) {
-            const itemImages = await Promise.all(
-              o.itemIds.slice(0, 3).map((id) => fetchItemBlob(id)),
-            );
-            return { title: o.title || "搭配", itemImages };
+            try {
+              const itemImages = await Promise.all(
+                o.itemIds.slice(0, 3).map((id) => fetchItemBlob(id)),
+              );
+              console.log(`[board] outfit ${i + 1} "${o.title}":`, itemImages.length, "items");
+              return { title: o.title || "搭配", itemImages };
+            } catch (e) {
+              console.error(`[board] outfit ${i + 1} item fetch failed:`, e);
+              throw new Error(`套 ${i + 1}「${o.title}」拉衣物图失败: ${e instanceof Error ? e.message : e}`);
+            }
           }
           return { title: o.title || "搭配", itemImages: [], description: o.body };
         }),
       );
+      const totalImages =
+        1 + boardOutfits.reduce((sum, o) => sum + o.itemImages.length, 0);
+      console.log("[board] step 2: call Azure with", totalImages, "images total");
+
       const dataUrl = await generateOutfitBoard(face.blob, resultOccasion, boardOutfits);
+      console.log("[board] step 3: Azure returned, dataUrl len", dataUrl.length);
       setBoardImage(dataUrl);
 
+      console.log("[board] step 4: save to IndexedDB");
       const blob = await (await fetch(dataUrl)).blob();
       await addRecord("generations", {
         blob,
@@ -165,7 +178,9 @@ export default function RecommendView() {
         note: `${resultOccasion} · ${outfits.length} 套总览`,
       });
       refreshSaved();
+      console.log("[board] done");
     } catch (e) {
+      console.error("[board] failed", e);
       setBoardError(e instanceof Error ? e.message : "生图失败");
     } finally {
       setBoardLoading(false);

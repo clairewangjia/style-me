@@ -9,8 +9,10 @@ import {
   recommend,
 } from "@/lib/api";
 import {
+  generateOutfitBoard,
   generateSceneAspirational,
   generateSceneFromCloset,
+  type BoardOutfit,
 } from "@/lib/azure";
 import {
   addRecord,
@@ -51,6 +53,11 @@ export default function RecommendView() {
   const [face, setFace] = useState<LibraryRecord | null>(null);
   const [savedScenes, setSavedScenes] = useState<LibraryRecord[]>([]);
   const [lightbox, setLightbox] = useState<string | null>(null);
+
+  // Board (overview-of-all-outfits) state
+  const [boardImage, setBoardImage] = useState<string | null>(null);
+  const [boardLoading, setBoardLoading] = useState(false);
+  const [boardError, setBoardError] = useState<string | null>(null);
 
   useEffect(() => {
     listRecords("uploads").then((all) => setFace(all[0] ?? null)).catch(() => {});
@@ -115,6 +122,8 @@ export default function RecommendView() {
     setResult(null);
     setError(null);
     setResultOccasion("");
+    setBoardImage(null);
+    setBoardError(null);
     setOccasion("");
     setExtra("");
     setTravelDest("");
@@ -122,6 +131,45 @@ export default function RecommendView() {
     setCustomDuration("");
     setTravelTemp("");
     setTravelType("");
+  };
+
+  const handleGenerateBoard = async () => {
+    if (!result || outfits.length === 0) return;
+    if (!face) {
+      setBoardError("请先去『形象分析』tab 上传一张正面人像");
+      return;
+    }
+    setBoardLoading(true);
+    setBoardError(null);
+    try {
+      const boardOutfits: BoardOutfit[] = await Promise.all(
+        outfits.map(async (o) => {
+          if (resultMode === "closet" && o.itemIds.length > 0) {
+            const itemImages = await Promise.all(
+              o.itemIds.slice(0, 3).map((id) => fetchItemBlob(id)),
+            );
+            return { title: o.title || "搭配", itemImages };
+          }
+          return { title: o.title || "搭配", itemImages: [], description: o.body };
+        }),
+      );
+      const dataUrl = await generateOutfitBoard(face.blob, resultOccasion, boardOutfits);
+      setBoardImage(dataUrl);
+
+      const blob = await (await fetch(dataUrl)).blob();
+      await addRecord("generations", {
+        blob,
+        mime: blob.type || "image/png",
+        mode: "scene-board",
+        sourceId: face.id,
+        note: `${resultOccasion} · ${outfits.length} 套总览`,
+      });
+      refreshSaved();
+    } catch (e) {
+      setBoardError(e instanceof Error ? e.message : "生图失败");
+    } finally {
+      setBoardLoading(false);
+    }
   };
 
   if (loading) return <LoadingState text="AI 正在搭配中..." />;
@@ -135,6 +183,20 @@ export default function RecommendView() {
           场景：{resultOccasion} · 模式：
           {resultMode === "closet" ? "用我的衣柜" : "推荐新单品"}
         </div>
+
+        {/* All-outfits board (top of result) */}
+        {outfits.length >= 2 && (
+          <BoardSection
+            outfitCount={outfits.length}
+            boardImage={boardImage}
+            loading={boardLoading}
+            error={boardError}
+            disabled={!face}
+            occasion={resultOccasion}
+            onGenerate={handleGenerateBoard}
+            onOpenImage={setLightbox}
+          />
+        )}
 
         {outfits.map((o, i) => (
           <OutfitCard
@@ -531,6 +593,92 @@ function OutfitCard({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────
+
+function BoardSection({
+  outfitCount,
+  boardImage,
+  loading,
+  error,
+  disabled,
+  occasion,
+  onGenerate,
+  onOpenImage,
+}: {
+  outfitCount: number;
+  boardImage: string | null;
+  loading: boolean;
+  error: string | null;
+  disabled: boolean;
+  occasion: string;
+  onGenerate: () => void;
+  onOpenImage: (url: string) => void;
+}) {
+  return (
+    <div className="mb-4 overflow-hidden rounded-2xl border border-[#6c5ce7]/20 bg-gradient-to-br from-purple-50 to-white p-4 shadow-sm">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div>
+          <div className="text-sm font-semibold text-zinc-900">
+            🎨 一张图看全部搭配
+          </div>
+          <div className="text-xs text-zinc-500">
+            杂志风总览，{outfitCount} 套同框
+          </div>
+        </div>
+      </div>
+      {!boardImage && !loading && (
+        <button
+          onClick={onGenerate}
+          disabled={disabled}
+          className="w-full rounded-xl bg-[#6c5ce7] py-2.5 text-sm font-medium text-white transition hover:bg-[#5a4bd6] disabled:opacity-50"
+        >
+          生成搭配总览图 ({outfitCount} 套)
+        </button>
+      )}
+      {loading && (
+        <div className="flex flex-col items-center gap-2 py-6 text-sm text-zinc-500">
+          <div className="h-7 w-7 animate-spin rounded-full border-2 border-zinc-300 border-t-[#6c5ce7]" />
+          <div>AI 正在排版总览图…通常 60~120 秒</div>
+        </div>
+      )}
+      {error && (
+        <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</div>
+      )}
+      {boardImage && (
+        <div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={boardImage}
+            alt="搭配总览"
+            onClick={() => onOpenImage(boardImage)}
+            className="w-full cursor-zoom-in rounded-xl"
+          />
+          <div className="mt-2 flex gap-2 text-xs text-zinc-400">
+            <span>已存入图库</span>
+            <span>·</span>
+            <a
+              href={boardImage}
+              download={`board-${occasion}.png`}
+              className="text-[#6c5ce7] hover:underline"
+            >
+              下载
+            </a>
+            <span>·</span>
+            <button
+              onClick={onGenerate}
+              className="text-[#6c5ce7] hover:underline"
+            >
+              再来一张
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -184,6 +184,63 @@ export function generateSceneFromCloset(
   return postEdit(buildClosetPrompt(occasion), [face, ...itemImages]);
 }
 
+// Magazine-style overview: render N outfits side-by-side (or row-by-row)
+// on the same person, with Chinese title labels per outfit.
+export interface BoardOutfit {
+  /** Display title for this outfit row, e.g. "Day 1-2: 清爽休闲". */
+  title: string;
+  /** Wardrobe item images for this outfit (closet mode). Empty for aspirational. */
+  itemImages: Blob[];
+  /** Free-form text description (used for aspirational outfits). */
+  description?: string;
+}
+
+function buildBoardPrompt(occasion: string, outfits: BoardOutfit[]): string {
+  const outfitLines = outfits
+    .map((o, i) => {
+      const itemNote = o.itemImages.length > 0
+        ? `(use the supplied garment images marked outfit-${i + 1}-item-* exactly)`
+        : `(outfit description: ${o.description?.slice(0, 200) ?? ""})`;
+      return `${i + 1}. "${o.title}" ${itemNote}`;
+    })
+    .join("\n");
+
+  return (
+    SCENE_IDENTITY_PREAMBLE +
+    `
+Generate ONE single editorial fashion magazine page that shows ${outfits.length} outfit looks of the SAME reference person, arranged as a vertical magazine layout.
+
+Page header (in Chinese): "推荐搭配 — ${occasion}"
+
+Each outfit is one ROW (left to right: 1-2 portraits of the person in that outfit). Above each row, a clear Chinese title label.
+
+Outfits (in order, top to bottom):
+${outfitLines}
+
+Layout requirements:
+- Magazine grid layout, soft pastel background, thin separator lines between rows.
+- Each portrait is full-body or 3/4 body.
+- The SAME person appears in every portrait — face must be identical to reference.
+- Garments must match the supplied product images for closet outfits; do NOT invent substitutes.
+- For aspirational outfits, render the described garments faithfully.
+- Use Simplified Chinese for the page header and outfit titles.
+- Premium editorial photography quality, natural lighting.
+- Vertical aspect ratio.
+- Background should fit "${occasion}" mood.`
+  );
+}
+
+export function generateOutfitBoard(
+  face: Blob,
+  occasion: string,
+  outfits: BoardOutfit[],
+): Promise<string> {
+  // Flatten: face first, then all per-outfit item images in order.
+  // Total image cap: face + up to 8 garment refs (Azure 4MB each, shrink applied).
+  const itemBlobs = outfits.flatMap((o) => o.itemImages).slice(0, 8);
+  return postEdit(buildBoardPrompt(occasion, outfits), [face, ...itemBlobs]);
+}
+
 export function generateSceneAspirational(
   face: Blob,
   occasion: string,

@@ -64,3 +64,139 @@ export async function analyzeImage(
     ? `data:image/png;base64,${item.b64_json}`
     : (item.url as string);
 }
+
+// ──────────────────────────────────────────────────────────────────
+// Scene generation. Two flavours:
+//   - generateSceneFromCloset: face + actual wardrobe item images via
+//     multi-image /edits. Output should match the user's real clothes.
+//   - generateSceneAspirational: face only; outfit described in text.
+//     Used when recommending items the user does NOT own.
+// Both use Azure /images/edits — gpt-image accepts repeated `image`
+// fields in the multipart form to ingest multiple references.
+// ──────────────────────────────────────────────────────────────────
+
+const SCENE_IDENTITY_PREAMBLE = `Use the provided portrait as the EXACT reference person.
+
+Hard constraints:
+- Preserve the EXACT facial features, face shape, skin tone, eye shape, nose, mouth, ethnicity, hair color, and apparent age of the reference person.
+- Do NOT beautify, slim the face, idealize, or replace with a generic model face.
+- The output must be unmistakably the same person as the reference.
+- Realistic editorial photography quality, natural lighting.
+- No text, captions, watermarks, or logos.
+`;
+
+function buildClosetPrompt(occasion: string): string {
+  return (
+    SCENE_IDENTITY_PREAMBLE +
+    `
+The first input image is the FACE reference. The remaining input images are the EXACT GARMENTS the person should be wearing — same color, pattern, silhouette, fabric, and details. Do NOT invent substitutes or add unspecified items.
+
+Generate a full-body editorial fashion photograph of the SAME person wearing all the supplied garments together as one outfit, in the following scene:
+
+Scene / occasion: ${occasion}
+
+Composition:
+- Full body, natural standing or candid pose appropriate to the scene.
+- Background that fits the scene/occasion.
+- Magazine cover quality, photorealistic, soft natural light.
+- Aspect ratio vertical 2:3.`
+  );
+}
+
+function buildAspirationalPrompt(
+  occasion: string,
+  recommendation: string,
+): string {
+  const trimmed = recommendation.slice(0, 700);
+  return (
+    SCENE_IDENTITY_PREAMBLE +
+    `
+Generate a full-body editorial fashion photograph of the SAME person wearing an OUTFIT THE USER DOES NOT YET OWN — these are aspirational suggestions to inspire purchase. Render the garments described below faithfully.
+
+Scene / occasion: ${occasion}
+
+Suggested outfit (Chinese, parse the items mentioned, ignore any item_xxxx IDs):
+${trimmed}
+
+Composition:
+- Full body, natural standing or candid pose appropriate to the scene.
+- Background that fits the scene/occasion.
+- Magazine cover quality, photorealistic, soft natural light.
+- Aspect ratio vertical 2:3.`
+  );
+}
+
+async function postEdit(
+  prompt: string,
+  images: Blob[],
+): Promise<string> {
+  if (!ENDPOINT || !DEPLOYMENT || !API_VERSION || !KEY) {
+    throw new Error("Azure OpenAI env vars missing (NEXT_PUBLIC_*)");
+  }
+  if (images.length === 0) throw new Error("at least one input image required");
+
+  const url = `${ENDPOINT}/openai/deployments/${DEPLOYMENT}/images/edits?api-version=${API_VERSION}`;
+  const body = new FormData();
+
+  for (let i = 0; i < images.length; i++) {
+    const src = images[i];
+    const base =
+      src instanceof File
+        ? src
+        : new File([src], `input-${i}.jpg`, { type: src.type || "image/jpeg" });
+    const shrunk = await shrinkForAzure(base);
+    body.append(
+      "image",
+      new File([shrunk], `input-${i}.jpg`, { type: shrunk.type || "image/jpeg" }),
+    );
+  }
+  body.append("prompt", prompt);
+  body.append("size", "1024x1536");
+  body.append("n", "1");
+
+  console.log("[azure/scene] POST", url, "images:", images.length);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "api-key": KEY },
+    body,
+  });
+  console.log("[azure/scene] status", res.status);
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Azure ${res.status}: ${text}`);
+  }
+  const json = (await res.json()) as {
+    data?: { b64_json?: string; url?: string }[];
+  };
+  const item = json.data?.[0];
+  if (!item) throw new Error("no image returned");
+  return item.b64_json
+    ? `data:image/png;base64,${item.b64_json}`
+    : (item.url as string);
+}
+
+export function generateSceneFromCloset(
+  face: Blob,
+  itemImages: Blob[],
+  occasion: string,
+): Promise<string> {
+  return postEdit(buildClosetPrompt(occasion), [face, ...itemImages]);
+}
+
+export function generateSceneAspirational(
+  face: Blob,
+  occasion: string,
+  recommendation: string,
+): Promise<string> {
+  return postEdit(buildAspirationalPrompt(occasion, recommendation), [face]);
+}
+
+/** @deprecated kept for back-compat — use generateSceneAspirational. */
+export function generateScene(
+  face: Blob,
+  occasion: string,
+  recommendation: string,
+): Promise<string> {
+  return generateSceneAspirational(face, occasion, recommendation);
+}

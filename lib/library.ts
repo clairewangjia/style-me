@@ -11,8 +11,9 @@ export interface LibraryRecord {
   blob: Blob;            // image bytes
   mime: string;          // e.g. "image/png"
   createdAt: number;     // epoch ms
-  mode?: string;         // only for generations: "hair" | "color" | ...
-  sourceId?: string;     // only for generations: id of upload it came from
+  mode?: string;         // generations: "hair" | "color" | "scene-closet" | "scene-aspirational" | ...
+  sourceId?: string;     // generations: id of upload it came from
+  note?: string;         // optional human-readable label (e.g. occasion text)
 }
 
 function openDb(): Promise<IDBDatabase> {
@@ -68,6 +69,7 @@ export async function addRecord(
     mime: rec.mime,
     mode: rec.mode,
     sourceId: rec.sourceId,
+    note: rec.note,
   };
   await tx(store, "readwrite", (s) => s.add(full));
   return full;

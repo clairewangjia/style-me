@@ -78,16 +78,21 @@ export async function recommend(req: RecommendRequest): Promise<RecommendRespons
 }
 
 // Fetch a wardrobe item image as Blob for use in image-edit prompts.
-// Browser fetch() to the dev tunnel sometimes races the tunnel's
-// session-cookie handshake and trips a CORS-style "Failed to fetch".
-// <img>+canvas is more forgiving: the browser handles the request,
-// crossOrigin="anonymous" + server ACAO=* lets us read the bytes back.
-// We try <img> first; fall back to fetch if that fails (e.g. in
-// non-DOM environments).
+//
+// Browser caching gotcha: wardrobe thumbnails are loaded with plain
+// <img> (no-cors mode), so the response is cached WITHOUT CORS
+// headers. A subsequent <img crossOrigin="anonymous"> or fetch() to
+// the same URL hits that cached entry and fails with "No ACAO header"
+// even though the server WOULD return ACAO if asked fresh. The dev
+// tunnel doesn't send `Vary: Origin` to disambiguate.
+//
+// Workaround: append a `?cors=1` query so the cors-mode request
+// resolves to a different cache key. Fall back to <img>+canvas, then
+// fetch().blob().
 export async function fetchItemBlob(id: string): Promise<Blob> {
-  const url = itemImageUrl(id);
+  const base = itemImageUrl(id);
+  const url = base + (base.includes("?") ? "&" : "?") + "cors=1";
 
-  // <img>+canvas path
   if (typeof window !== "undefined" && typeof Image !== "undefined") {
     try {
       return await loadImageAsBlob(url);

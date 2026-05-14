@@ -9,6 +9,8 @@ import type {
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8766";
+const BLOB_BASE = process.env.NEXT_PUBLIC_WARDROBE_BLOB_BASE || "";
+const BLOB_SAS = process.env.NEXT_PUBLIC_WARDROBE_BLOB_SAS || "";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, init);
@@ -31,6 +33,10 @@ export async function fetchItem(id: string): Promise<WardrobeItem> {
 }
 
 export function itemImageUrl(id: string): string {
+  if (BLOB_BASE) {
+    const sep = BLOB_SAS.startsWith("?") ? "" : "?";
+    return `${BLOB_BASE}/${id}.jpg${BLOB_SAS ? sep + BLOB_SAS : ""}`;
+  }
   return `${API_BASE}/api/items/${id}/image`;
 }
 
